@@ -1,0 +1,85 @@
+---
+title: "Lockdown as a driver of COVID-19 cases: A Global Health Study"
+author: "C. Elegans"
+output:
+  html_document: default
+  pdf_document:
+bibliography: references.bib
+---
+
+We conducted a study investigating the relationship between lockdown levels and number of cases of COVID-19 in several countries around the world. The selected countries are displayed in red below:
+
+```{r,echo = FALSE, message=FALSE, warning=FALSE}
+if(!require("rnaturalearth")){install.packages("rnaturalearth"); library("rnaturalearth")}
+if(!require("rnaturalearthdata")){install.packages("rnaturalearthdata"); library("rnaturalearthdata")}
+if(!require("tidyverse")){install.packages("tidyverse"); library("tidyverse")}
+if(!require("magrittr")){install.packages("magrittr"); library("magrittr")}
+if(!require("broom")){install.packages("broom"); library("broom")}
+if(!require("sf")){install.packages("sf"); library("sf")}
+```
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE,fig.height = 7, fig.width = 14, fig.align = "center"}
+data <- read_csv("covid-data.csv")
+locations <- unique(data$location)
+locations <- locations[!is.na(locations)]
+results <- c()
+
+for(location_ in locations){
+  data %>% filter(location == location_) %>% 
+    filter(!is.na(new_cases_smoothed_per_million), !is.na(stringency_index)) %$%
+    cor(new_cases_per_million, stringency_index) -> corr
+    results <- rbind(results,data.frame(location = location_, correlation = corr))
+}
+results <- results %>% mutate(selected = case_when(correlation > 0.15 ~ "Yes",
+                                                   correlation <= 0.15 ~ "No",
+                                                   is.na(correlation) ~ "No")) %>%
+  mutate(selected = factor(selected, levels = c("Yes", "No")))
+results %>% filter(selected == "Yes") %>% select(location) %>% as.matrix() %>% as.vector()->filtered_locations
+world <- ne_countries(scale = "small", returnclass = "sf")
+world <- left_join(world, results,by = c("name" = "location"))
+ggplot(data = world,aes(fill = selected)) +
+    geom_sf() + theme_minimal(base_size = 16) + scale_fill_manual(values=c("maroon","gray"),na.value = "gray") + labs(fill = "Selected")
+
+```
+
+The data used in this study is made available by [@owid]. We considered the variables new_cases_smoothed_per_million, that contains new COVID-19 cases, smoothed by a 7-day moving average, and stringency_index, that contains the strength (up to 100%) of non-pharmaceutical interventions in each location. We found strong significance of the role of the stringency index as a explanatory variable in our linear model for the number of new case new cases in every country studied, as shown in the table below:
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+result_p <-c()
+  for(loc in filtered_locations){
+    data %>% filter(location == loc) %>% lm(new_cases_per_million~stringency_index,.) %>% summary() %>% tidy() %>% mutate(location = loc) %>% filter(term == "stringency_index") %>%
+      select(location,estimate, std.error,p.value) -> result_df
+    result_p <- rbind(result_p, result_df)
+  }
+knitr::kable(result_p)
+```
+
+We can visualize our results in the plot below:
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE, fig.width=14,fig.height=40,fig.align = "center"}
+data %>% filter(location %in% filtered_locations) %>%
+  ggplot(aes(x = stringency_index, y = new_cases_per_million, group = location))+
+  facet_wrap(~location, scales = "free_y", ncol = 3) + geom_point() + geom_smooth(method = "lm",color = "maroon", fill = "maroon")+theme_bw(base_size = 14) + 
+  labs(x = "Stringency index",y = "New cases per Million")
+```
+
+## Conclusions
+
+Our model shows strong evidence of lockdowns leading to more cases of COVID-19 worldwide. This can be explained as people having to gather in closed locations for increased times, and, as COVID-19 is an airbone disease, multiple people in closed locations increases the risk of COVID-19 transmission. Thus, our work shows that any physical distancing interventions should be ended if we expect the pandemic to end.
+
+## Debunking
+
+This is a good example of cherry-picking. The countries were selected based in the correlation between the two time-series being higher than 0.15. Even though the number of countries studied is high (42) for study standards, our database is much bigger and the true distribution of this correlation is given below:
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE, fig.width=14,fig.height=7,fig.align = "center"}
+results %>%
+  ggplot(aes(x = correlation))+
+  geom_histogram(fill = "maroon", color = "white") + theme_bw(base_size = 14) + 
+  geom_vline(xintercept = 0, linetype = "dashed", size = 1) + labs(x = "Correlation", y = "Frequency")
+```
+
+While the data presented is not enough to support the use of lockdowns, we know that, by implementing physical distancing measures we reduce the chance of a person having a contact with an infected individual, and this, in principle, would reduce the number of COVID-19 cases in the population.
+
+Additionally, high stringency measures were usually deployed during increase in cases and relaxed when the number of cases start to fall. Unknown to (or ignored by) policymakers, this type of measure usually takes some time to start having an effect, implying that these policies should have been maintained for some time after the cases starting to decrease. Relaxing these measures inadvertently may lead to the "divorce effect", known to theoretical epidemiologists [@Hollingsworth_2020].
+
+Finally, one may question the quality of data and model developed. The number of cases is very sensitive to reporting rates in each country, while the stringency index is considerably difficult to measure. Also, policies may be "theoretically" implemented, but in practice the population may not follow the guidelines. As said before, the effect of stringent measures may take a while appear in the number of cases, so the model should have taken into account delays between time-series. Lastly, of course, this model is too simple for such complex data and other covariates (such as vaccination) should have been considered.
